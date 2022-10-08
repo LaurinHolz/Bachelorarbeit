@@ -7,13 +7,13 @@ statistical_test <- function(x){
   mu <- mean(x)
   sigma <- sd(x)
   
-  z_value <-  (x-mu)/sigma #Berechne Z-Wert für jede Beobachtung
+  z_value <-  (x-mu)/sigma #Berechne Z-Wert fÃ¼r jede Beobachtung
   outlier_position <- which(abs(z_value)>3) #Identifiziere Outlier, falls Z>3
     
   if(length(outlier_position)==0){
     return("Kein Outlier gefunden")
   }else{
-    return(outlier_position)#Gebe die Position der Outlier zurück
+    return(outlier_position)#Gebe die Position der Outlier zurÃ¼ck
   }  
 }
 
@@ -24,12 +24,12 @@ Mahalanobis_distance <- function(data,alpha=0.01){
   sigma <- matrix(unlist(cov(data)),ncol(data),ncol(data))
   mahalanobis_dist <- numeric(nrow(data))
   
-  #Berechne den Mahalanobis-Abstand für jeden Beobachtungspunkt
+  #Berechne den Mahalanobis-Abstand fÃ¼r jeden Beobachtungspunkt
   for(i in 1:nrow(data)){
     mahalanobis_dist[i] <- as.numeric((data[i,]-mu)) %*% solve(sigma) %*% as.numeric(t(data[i,]-mu))
   }
   
-  #Berechne P-Wert über die Chi-Quadrat Verteilung
+  #Berechne P-Wert Ã¼ber die Chi-Quadrat Verteilung
   p_value <- pchisq(mahalanobis_dist,df=ncol(data), lower.tail=FALSE)
   
   #Identifiziere Outlier, deren P-Wert kleiner dem Signifikanzniveau ist
@@ -38,14 +38,14 @@ Mahalanobis_distance <- function(data,alpha=0.01){
   if(length(outlier_position)==0){
     return("Kein Outlier gefunden")
   }else{
-    return(outlier_position)#Gebe die Position der Outlier zurück
+    return(outlier_position)#Gebe die Position der Outlier zurÃ¼ck
   }
 } 
 
 #Minimum Covariance Determinant
 MCD <- function(data,alpha=0.01,h=0.75){
   
-  #Berechne den Schwellenwert über die Chi-Quadrat Verteilung
+  #Berechne den Schwellenwert Ã¼ber die Chi-Quadrat Verteilung
   cutoff <- qchisq(p = 1-alpha, df = ncol(data)*h)
   
   #Berechne die Teilmenge des Datensatzes,
@@ -56,7 +56,7 @@ MCD <- function(data,alpha=0.01,h=0.75){
   
   dist <- numeric(nrow(data))
   
-  #Berechne den Mahalanobis-Abstand für jeden Beobachtungspunkt
+  #Berechne den Mahalanobis-Abstand fÃ¼r jeden Beobachtungspunkt
   for (i in 1:nrow(data)) {
     dist[i] <- as.numeric((data[i,]-mu)) %*% solve(sigma)%*% as.numeric(t(data[i,]-mu))
   }
