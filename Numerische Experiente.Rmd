@@ -1,0 +1,385 @@
+---
+title: "Numerische Experimente"
+author: "Laurin Holz"
+date: "21 9 2022"
+output: html_document
+---
+Lade und installiere benötigte Packages
+```{r}
+list.of.packages <- c("readxl","norm","norm2","dplyr",
+                      "ggplot2","bestNormalize","robustbase",
+                      "mvnormtest","mtsdi")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages, dependencies = TRUE)
+lapply(list.of.packages, require, character.only = TRUE)
+```
+
+Outlier Beispiel aus Kapitel 2.2 (Abbildung 2.6-2.9)
+```{r}
+data <- read.csv("HeightWeight.csv")
+data <- data[-1]#Lösche erste Spalte "index"
+data <- data[1000:1249,1:2]#Teildatensatz mit 250 Beobachtungen 
+
+#Umrechnung der Einheiten, Änderung der Spaltennamen
+data$Height.Inches. <- data$Height.Inches. * 2.54
+data$Weight.Pounds. <- data$Weight.Pounds. * 0.4536
+data <- rename(data,"Größe in cm" = "Height.Inches.")
+data <- rename(data,"Gewicht in kg" = "Weight.Pounds.")
+data <- round(data,2)
+
+head(data)#Ausgabe der ersten Zeilen des Datensatzes
+
+round(colMeans(data),2)
+
+#Multivariater Shapiro Wilk Test
+dataset <- t(as.matrix(data))
+mshapiro.test(dataset) 
+
+#Testen der Ausreißer mit Z-Test, Mahalanobis-Abstand, Minimum Covariance #Determinant
+statistical_test(data$`Größe in cm`)
+statistical_test(data$`Gewicht in kg`)
+Mahalanobis_distance(data)
+MCD(data)
+
+#Ausgabe der Ergebnisse in einer Tabelle
+A <- matrix(NA,4,3)
+A[1,] <- c(135,as.numeric(data[135,]))
+A[2,] <- c(164,as.numeric(data[164,]))
+A[3,] <- c(188,as.numeric(data[188,]))
+A[4,] <- c(246,as.numeric(data[246,]))
+
+df1 <- as.data.frame(A)
+names(df1)[1] <- "Position"
+names(df1)[2] <- "Größe in cm"
+names(df1)[3] <- "Gewicht in kg"
+df1
+```
+
+Testen der Outlier Verfahren (Abbildung 5.1 und 5.2)
+```{r}
+df <- read_excel("Felddaten.xlsx")
+
+#Testen auf Ausreißer
+statistical_test(df$eggweight)
+statistical_test(df$mort)
+statistical_test(df$seconds)
+Mahalanobis_distance(df)
+MCD(df)
+
+#Ausgabe der Ergebnisse in einer Tabelle
+A <- matrix(0,4,7)
+A[1,] <- c(1,as.numeric(df[1,]))
+A[2,] <- c(2,as.numeric(df[2,]))
+A[3,] <- c(39,as.numeric(df[39,]))
+A[4,] <- c(48,as.numeric(df[48,]))
+data <- as.data.frame(A)
+names <- c("Position","Age","Eggweight", "Feed intake","#Eggs","Mortality","seconds")
+names(data) <- names
+data
+Mahalanobis_distance(df)
+
+#Testen auf Ausreißer mit einem transformierten Datensatz
+obj <- orderNorm(as.matrix(df))
+p <- predict(obj)
+Mahalanobis_distance(p)
+MCD(p)
+```
+
+EM-Algorithmus: Imputation mit 10% fehlenden Daten, 
+Überprüfe Konvergenzordnung,
+Monotonie der Likelihoodfunktion (Ohne Transformation),
+Abbildung 5.8 und 5.6/5.7 (mit 50,51, statt 48,49)
+```{r}
+df <- read_excel("Felddaten.xlsx")
+df <- df[,-1]
+#data(cholesterol)
+#df <- cholesterol
+
+#Lösche 10% der Beobachtungen
+entries <- nrow(df)*ncol(df)
+num_delete <- round(0.1*entries)
+col <- floor(runif(num_delete,1,ncol(df)+1))
+row <- floor(runif(num_delete,1,nrow(df)))
+df2 <- df
+for (i in 1:num_delete) {
+  df2[row[i],col[i]] <- NA
+}
+
+#Führe den EM-Algorithmus aus und erhalte alle notwendigen Informationen
+df2_obs <- na.omit(df2)
+m <- colMeans(df2_obs)#Startwert Erwartungswert der beobachteten Daten
+v <- cov(df2_obs)#Startwert Kovarianzmatrix der beobachteten Daten
+out <- em_algorithm(df2, start.mean = m, start.var = v, rseed = 2)
+df3 <- as.data.frame(out[[1]])
+
+Iteration <- out[[4]]
+theta_star <- out[[5]]
+
+Rate <- out[[2]]
+Likelihood <- out[[3]]
+Iteration <- c(1:Iteration)
+
+#Ausgabe der Ergebnisse in einer Tabelle + Plot der Likelihood-Auswertungen
+df1 <- data.frame(Iteration,Rate,Likelihood)
+df1%>%
+  ggplot( aes(x=Iteration, y=Likelihood)) +
+    geom_line() +
+    geom_point(color="red")
+
+df1
+
+
+```
+
+Imputationsbasierte Verfahren ganzer Datensatz
+```{r}
+it <- 100 #Anzahl der Durchläufe
+max_percentage <-20 #Anzahl des maximalen Prozentsatzes an fehlenden Daten
+
+error_m_cov <- numeric(max_percentage)
+error_km_cov <- numeric(max_percentage)
+error_r_cov <- numeric(max_percentage)
+error_em_cov <- numeric(max_percentage)
+error_em_splines_cov <- numeric(max_percentage)
+
+percent <- sequence(max_percentage)
+error_matrix_m <- matrix(0,it,max_percentage)
+error_matrix_km <- matrix(0,it,max_percentage)
+error_matrix_r <- matrix(0,it,max_percentage)
+error_matrix_em <- matrix(0,it,max_percentage)
+error_matrix_em_splines <- matrix(0,it,max_percentage)
+
+error_matrix_m_cov <- matrix(0,it,max_percentage)
+error_matrix_km_cov <- matrix(0,it,max_percentage)
+error_matrix_r_cov <- matrix(0,it,max_percentage)
+error_matrix_em_cov <- matrix(0,it,max_percentage)
+error_matrix_em_splines_cov <- matrix(0,it,max_percentage)
+
+for (k in 1:it) {
+  error_m <- numeric(max_percentage)
+  error_km <- numeric(max_percentage)
+  error_r <- numeric(max_percentage)
+  error_em <- numeric(max_percentage)
+  error_em_splines <- numeric(max_percentage)
+  for (j in 1:max_percentage) {
+    df <- read_excel("Felddaten.xlsx")
+    df <- df[,-c(4,6)] #Für einzelene Spalten, lösche Variablen hier
+    entries <- nrow(df)*ncol(df)
+    num_delete <- round(j*0.01*entries)
+    row <- floor(runif(num_delete,1,nrow(df)))
+    col <- floor(runif(num_delete,2,5))
+    df2 <- df
+
+    #Löschen von Beobachtungen
+    for (i in 1:num_delete) {
+      df2[row[i],col[i]] <- NA
+    }
+    
+    #Anwendung der Verfahren
+    output_m <- mean_imp(df2)
+    output_km <- conditionalMean_imp(df2)
+    output_r <- regression_imp(df2)
+    df_obs <- na.omit(df2)
+    me <- colMeans(df_obs)
+    v <- cov(df_obs)
+    
+    output_em <- em_algo(df2,imputations = 10,maxIt = 1000,
+                             criterion = 0.00001,rseed=123,
+                            start.mean = me,start.var = v)
+    output_em <- as.data.frame(output_em[[10]])
+    
+    
+   #output_em_splines <- mtsdi::mnimput(~age+eggweight+Feed+mort,df2)$filled
+    
+    #Berechnung des relativen Fehlers mit der Spaltensummennorm
+    #für jede einzelene Variable (realtiver Fehler wird aufsummiert)
+    for (s in 2:ncol(df)) {
+      error_m[j] <- error_m[j] + sum(abs(output_m[,s]-df[,s]))/sum(abs(df[,s])) 
+      error_km[j] <- error_km[j] + sum(abs(output_km[,s]-df[,s]))/sum(abs(df[,s]))
+      error_r[j] <- error_r[j] + sum(abs(output_r[,s]-df[,s]))/sum(abs(df[,s]))
+      error_em[j] <- error_em[j] + sum(abs(output_em[,s]-df[,s]))/sum(abs(df[,s]))
+    # error_em_splines[j] <- error_em_splines[j] + sum(abs(output_em_splines[,s]-df[,s]))/sum(abs(df[,s]))
+    }
+   
+    #Berechnung des relativen Fehlers der Varianz (Maximumsnorm)
+    cov_df <- cov(df)
+    error_m_cov[j] <- max(abs(diag(cov(output_m)-cov_df)))/max(abs(diag(cov_df)))
+    error_km_cov[j] <- max(abs(diag(cov(output_km)-cov_df)))/max(abs(diag(cov_df)))
+    error_r_cov[j] <- max(abs(diag(cov(output_r)-cov_df)))/max(abs(diag(cov_df)))
+    error_em_cov[j] <- max(abs(diag(cov(output_em)-cov_df)))/max(abs(diag(cov_df)))
+    #error_em_splines_cov[j] <- max(abs(diag(cov(output_em_splines)-cov_df)))/max(abs(diag(cov_df)))
+  }
+  
+  print(k)
+  #Erstelle Matrix, um den Durchschnitt zu Berechnen
+  error_matrix_m[k,] <- error_m
+  error_matrix_km[k,] <- error_km
+  error_matrix_r[k,] <- error_r
+  error_matrix_em[k,] <- error_em
+  #error_matrix_em_splines[k,] <- error_em_splines
+  
+  error_matrix_m_cov[k,] <- error_m_cov
+  error_matrix_km_cov[k,] <- error_km_cov
+  error_matrix_r_cov[k,] <- error_r_cov
+  error_matrix_em_cov[k,] <- error_em_cov
+  #error_matrix_em_splines_cov[k,] <- error_em_splines_cov
+  
+}
+
+error_mean_m <- numeric(max_percentage)
+error_mean_km <- numeric(max_percentage)
+error_mean_r <- numeric(max_percentage)
+error_mean_em <- numeric(max_percentage)
+#error_mean_em_splines <- numeric(max_percentage)
+
+error_mean_m_cov <- numeric(max_percentage)
+error_mean_km_cov <- numeric(max_percentage)
+error_mean_r_cov <- numeric(max_percentage)
+error_mean_em_cov <- numeric(max_percentage)
+#error_mean_em_splines_cov <- numeric(max_percentage)
+
+#Berechne den Durchschnitt des relativen Fehlers für jeden Prozentsatz
+#Es wird der Durchschnitt aus jeder Spalte berechnet
+for (i in 1:max_percentage) {
+  error_mean_m[i] <- (sum(error_matrix_m[,i]))/it
+  error_mean_km[i] <- (sum(error_matrix_km[,i]))/it
+  error_mean_r[i] <- (sum(error_matrix_r[,i]))/it
+  error_mean_em[i] <- (sum(error_matrix_em[,i]))/it
+  #error_mean_em_splines[i] <- (sum(error_matrix_em_splines[,i]))/it
+  
+  error_mean_m_cov[i] <- (sum(error_matrix_m_cov[,i]))/it
+  error_mean_km_cov[i] <- (sum(error_matrix_km_cov[,i]))/it
+  error_mean_r_cov[i] <- (sum(error_matrix_r_cov[,i]))/it
+  error_mean_em_cov[i] <- (sum(error_matrix_em_cov[,i]))/it
+  #error_mean_em_splines_cov[i] <- (sum(error_matrix_em_cov[,i]))/it
+}
+
+#Plot der Ergebnisse
+d <- data.frame(percent,error_mean_m,error_mean_km,error_mean_r,error_mean_em)
+                #,error_mean_em_splines)
+        
+ggplot() +
+    geom_line(aes(x=d$percent, y=d$error_mean_m, color='red'))+
+    geom_line(aes(x=d$percent, y=d$error_mean_r, color='blue'))+
+    geom_line(aes(x=d$percent, y=d$error_mean_km, color='green'))+
+    geom_line(aes(x=d$percent, y=d$error_mean_em, color='black'))+
+    #geom_line(aes(x=d$percent, y=d$error_mean_em_splines, color='orange'))+
+    scale_x_continuous(breaks=seq(0,max_percentage,by=5))+
+    ggtitle("Eigewicht und Futterverbrauch")+
+    labs(x= "Fehlende Daten in %", y= "Relativer Fehler",color="Legende")+
+    scale_color_identity(guide = "legend",labels = c("EM","Regression","konditionaler Mittelwert","Mittelwert"))
+  
+#c("EM","Regression","konditionaler Mittelwert","Spline","Mittelwert"))
+
+#Plot der Abweichung der Varianz
+d2 <- data.frame(percent,error_mean_m_cov,error_mean_km_cov,error_mean_r_cov,error_mean_em_cov)#,error_mean_em_splines_cov)
+
+ggplot() +
+    geom_line(aes(x=d2$percent, y=d2$error_mean_m_cov, color='red'))+
+    geom_line(aes(x=d2$percent, y=d2$error_mean_r_cov, color='blue'))+
+    geom_line(aes(x=d2$percent, y=d2$error_mean_km_cov, color='green'))+
+    geom_line(aes(x=d2$percent, y=d2$error_mean_em_cov, color='black'))+
+    #geom_line(aes(x=d2$percent, y=d2$error_mean_em_splines, color='orange'))+
+    scale_x_continuous(breaks=seq(0,max_percentage,by=5))+
+    ggtitle("Vergleich der Varianzen")+
+    labs(x= "Fehlende Daten in %", y= "Relativer Fehler",color="Legende")+
+    scale_color_identity(guide = "legend",labels = c("EM","Regression","konditionaler Mittelwert","Mittelwert"))
+  
+
+
+
+ 
+```
+
+
+Vergleich EM mit und ohne Transformation
+```{r}
+it <- 1000
+max_percentage <- 10
+
+error_em <- numeric(max_percentage)
+error_em_tr <- numeric(max_percentage)
+percent <- sequence(max_percentage)
+
+error_matrix_em <- matrix(0,it,max_percentage)
+error_matrix_em_tr <- matrix(0,it,max_percentage)
+
+
+error_em_complete_matrix <- matrix(0,length(text),max_percentage)
+error_em_splines_complete_tr <- matrix(0,length(text),max_percentage)
+
+
+for (k in 1:it) {
+  error_complete_em <- numeric(max_percentage)
+  error_complete_em_tr <- numeric(max_percentage)
+  for (j in 1:max_percentage) {
+    df <- read_excel("Felddaten.xlsx")
+    #df <- df[,-c(3,4,5,6)]
+    entries <- nrow(df)*ncol(df)
+    num_delete <- round(j*0.01*entries)
+    row <- floor(runif(num_delete,1,nrow(df)))
+    col <- floor(runif(num_delete,2,7))
+    df2 <- df
+
+    #Lösche Beobachtungen
+    for (i in 1:num_delete) {
+      df2[row[i],col[i]] <- NA
+    }
+    
+    df_obs <- na.omit(df2)
+    me <- colMeans(df_obs)#Startwerte für EM-Algorithmus
+    v <- cov(df_obs)
+    output_em <- em_algo(df2,imputations = 10,maxIt = 1000,
+                              criterion = 0.00001,rseed=123,
+                              start.mean = me,start.var = v)
+    output_em <- as.data.frame(output_em[[10]])
+    
+    #Führe eine Transformation der Daten durch
+    obj <- orderNorm(as.matrix(df2))
+    p <- predict(obj)
+    df_obs2 <- na.omit(p)
+    me2 <- colMeans(df_obs2)
+    v2 <- cov(df_obs2)
+    tmp <- em_algo(p,imputations = 10,maxIt = 1000,
+                              criterion = 0.00001,rseed=123,
+                              start.mean = me2,start.var = v2)
+    tmp <- tmp[[10]]
+    output_em_tr <- as.data.frame(predict(obj,newdata = as.matrix(tmp),                        inverse = TRUE))#Rücktransformation
+    
+    #Berechnung des relativen Fehlers
+    for (s in 2:ncol(df)) {
+      error_em[j] <- error_em[j]+sum(abs(output_em[,s]-df[,s]))/sum(abs(df[,s]))
+      error_em_tr[j] <- error_em_tr[j]+sum(abs(output_em_tr[,s]-df[,s]))/sum(abs(df[,s]))
+    }
+    
+    
+  }
+  
+  error_matrix_em[k,] <- error_em
+  error_matrix_em_tr[k,] <- error_em_tr
+  print(k)
+}
+
+error_mean_em <- numeric(max_percentage)
+error_mean_em_tr <- numeric(max_percentage)
+
+#Berechne den Durchschnitt der Spalten
+for (i in 1:max_percentage) {
+  error_mean_em[i] <- (sum(error_matrix_em[,i]))/it
+  error_mean_em_tr[i] <- (sum(error_matrix_em_tr[,i]))/it
+}
+
+#Plot der Ergebnisse
+d <- data.frame(percent,error_mean_em, error_mean_em_tr)
+ggplot() +
+    geom_line(aes(x=d$percent, y=d$error_mean_em, color='black'))+
+    geom_line(aes(x=d$percent, y=d$error_mean_em_tr, color='green'))+
+    scale_x_continuous(breaks=seq(0,max_percentage,by=5))+
+    ggtitle("Gesamter Datensatz")+
+    labs(x= "Fehlende Daten in %", y= "Relativer Fehler",color="Legende")+
+    scale_color_identity(guide = "legend",labels = c("EM","EM transformiert"))
+  
+  #c("EM","Regression","konditionaler Mittelwert","Spline","Mittelwert")
+ 
+```
+
